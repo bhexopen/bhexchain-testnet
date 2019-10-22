@@ -1,0 +1,339 @@
+# Getting Start with BHEX Chain Testnet
+
+*Read this in other languages: English, 简体中文(TBD).*
+
+As the testnet is under active development, we currently provide the components pre-built as docker images for best compatibility, uploaded at:
+- Node service: https://hub.docker.com/r/bhexopen/bhexchain-testnet
+- Chainnode service: https://hub.docker.com/r/bhexopen/bhexchain-testnet-chainnode
+- CLI tool: https://hub.docker.com/r/bhexopen/bhexchain-testnet-cli
+
+## Setup and run a node
+
+As the components are built as docker images, we need docker installed as a pre-requisite.
+
+The setup is through the [docker-compose.yml](../docker-compose.yml) provided in the repository. The steps are as follows:
+
+1. Clone the repository.
+
+```console
+$ git clone https://github.com/bhexopen/bhexchain-testnet.git
+```
+
+2. In the repository directory, start the node service (called bhclear) using docker-compose.
+
+```console
+$ docker-compose up -d bhclear
+```
+
+3. Check the node log and wait for block synchronization, which may take a while.
+
+```console
+$ docker-compose logs -f bhclear
+```
+
+**Note:** ```--persistent-peers``` argument in entrypoint section in [docker-compose.yml](../docker-compose.yml) supplies the initial peers for block synchronization. You may change it to other peers if needed.
+
+## Interact with the chain
+
+Once the node is started and fully synced with all blocks, we can use cli tool to interact with the chain. The cli tool is also run through docker-compose, and all commands can be found through the following command.
+
+```console
+$ docker-compose run bhcli help
+```
+
+**Note:** You can use ```--node-url``` argument in entrypoint section variable in [docker-compose.yml](docker-compose.yml) supplies the url for cli tool to connect to. The default is set to the local node's IP address and RPC port (localhost:26657).
+
+Here we present instructions to deposit, transfer and withdraw cross-chain assets, i.e., ETH from [Ethereum Ropsten TestNet](https://ropsten.etherscan.io/).
+
+*Important notice: BHEX Chain testnet currently **ONLY** supports ETH on Ethereum Ropsten Testnet. Any other assets including mainnet ETH should not be used at this time, and will be lost.*
+
+### 1. Create and manage BHEX Chain custodian unit.
+
+A custodian unit is the account on BHEX Chain that can hold cross-chain assets, as a custodian unit. We will use custodian unit for account concept through out the docs.
+
+```console
+$ docker-compose run bhcli keys add alice
+Enter a passphrase to encrypt your key to disk:
+Repeat the passphrase:
+NAME:	TYPE:	ADDRESS:		PUBKEY:
+alice	local	cosmos1qxdcem6zwuc86ymm725wf928n4mv3qnppzkqj0	cosmospub1addwnpepq0ptnreu2r4t0czuaaahl7n2a8pevxyr2vsfexxp00qahac8q94yspqf0ax
+```
+
+Please ignore the output address and pubkey as we are using cosmos-sdk to manage keystore. Insterad, we can run following command to get BHEX Chain custodian unit address:
+
+```console
+$ docker-compose run bhcli cu show -a alice
+BHL3RExb5D9uEpBCYZT2Le8PAQ2MvsWrDLz
+```
+
+The output example shows that a new custodian unit with address ```BHL3RExb5D9uEpBCYZT2Le8PAQ2MvsWrDLz``` is created. The address in BHEX Chain is always starting with `BH`.
+
+Then we can query the initial asset information of the custodian unit from the node:
+
+```console
+$ docker-compose run bhcli query assets BHL3RExb5D9uEpBCYZT2Le8PAQ2MvsWrDLz --chain-id bhexchain-testnet
+
+  CUAddress:BHL3RExb5D9uEpBCYZT2Le8PAQ2MvsWrDLz
+  Symbol:BHT
+  Address:
+  Balance:0
+  BalanceOnhold:0
+  AssetType:2
+
+```
+
+**Note:** The chain id is ```bhexchain-testnet``` whenever ```--chain-id`` argument is required.
+
+There is only 0 balance of BHT for this custodian unit address. After requesting some BHT, for example, 500 BHT, running the same query will give:
+
+```console
+$ docker-compose run bhcli query assets BHL3RExb5D9uEpBCYZT2Le8PAQ2MvsWrDLz --chain-id bhexchain-testnet
+
+  CUAddress:BHL3RExb5D9uEpBCYZT2Le8PAQ2MvsWrDLz
+  Symbol:BHT
+  Address:
+  Balance:500000000000000000000
+  BalanceOnhold:0
+  AssetType:2
+
+```
+Note that BHT has 18 decimals.
+
+### 2. Create a custodian deposit address for Ropsten testnet ETH
+
+To manage cross-chain assets, the first task is to create a custodian deposit address. This is through the ```token``` sub tx command in the cli tool.
+
+```console
+$ docker-compose run bhcli --chain-id bhexchain-testnet tx cu keygen BHETH BHL3RExb5D9uEpBCYZT2Le8PAQ2MvsWrDLz --from alice --gas-prices 1ubht
+{"chain_id":"bhexchain-testnet","account_number":"0","sequence":"0","fee":{"amount":[{"denom":"bht","amount":"200000000000000000"}],"gas":"200000"},"msgs":[{"type":" custodianunit/MsgKeyGen","value":{"Symbol":"BHETH","To":"BHL3RExb5D9uEpBCYZT2Le8PAQ2MvsWrDLz","From":"BHL3RExb5D9uEpBCYZT2Le8PAQ2MvsWrDLz"}}],"memo":""}
+
+confirm transaction before signing and broadcasting [Y/n]: Y
+Password to sign with 'alice':
+
+Response:
+  TxHash: BB31D1D355F7C6F68A55063528637B28900869E445EE8450556976FC03064960
+```
+
+**Note:** The gas price on testnet can be always set to ```1ubht```.
+
+The deposit address is generated by all validators asynchronously. After the deposit address is generated, the validators will broadcast a MsgKeyGenFinish transaction to BHEX Chain. After a while when the MsgKeyGenFinish transaction is committed, we can query result in two ways:
+
+```console
+$ docker-compose run bhcli query cu order BHL3RExb5D9uEpBCYZT2Le8PAQ2MvsWrDLz 0 --chain-id bhexchain-testnet
+
+		CUAddress:BHL3RExb5D9uEpBCYZT2Le8PAQ2MvsWrDLz
+		ID:0
+		OrderType:1
+		Symbol:BHETH
+		Status:7
+		To:BHL3RExb5D9uEpBCYZT2Le8PAQ2MvsWrDLz
+		MultiSignAddress:0xB6F9164ce6188f7d95523708fe450ABad1D45FBf
+		KeyNodes:BHNt1SKNzyNfb8AZLbKjWECSvW7tZDFZWkH,BHfB6KaaefwYJwfW4kqgnxgEeEjYDHXdKJm,BHfCHYaR9f2PFzjCWK8wEp4CcB8jMLNFTHt,BHge8Gafcm9ac1iu2pM4U69poVENHMWfMWN,
+
+$ docker-compose run bhcli query cu asset BHL3RExb5D9uEpBCYZT2Le8PAQ2MvsWrDLz BHETH --chain-id bhexchain-testnet
+
+  CUAddress:BHL3RExb5D9uEpBCYZT2Le8PAQ2MvsWrDLz
+  Symbol:BHETH
+  Address:0xB6F9164ce6188f7d95523708fe450ABad1D45FBf
+  Balance:0
+  BalanceOnhold:0
+  AssetType:2
+
+```
+In a short description, we can query the KeyGen order with order id ```0``` to get the deposit address ```0xB6F9164ce6188f7d95523708fe450ABad1D45FBf``` from ```MultiSignAddress```, or query the asset ```BHETH``` to get it from ```Address```. The asset symbol is ```BHETH```, meaning ethers in Ethereum, currently using Ropsten testnet.
+
+**Note:** In demo chain, we only support asset symbol BHETH, and other symbols will be failed. Also an custodian unit can create at most 1 deposit address.
+
+### 3. Deposit cross-chain assets
+
+With the created custodian deposit address, we can deposit Ropsten ethers to the custodian unit. First we send some ethers to the ETH address ```0xB6F9164ce6188f7d95523708fe450ABad1D45FBf``` on Ropsten testnet. This can be done by MetaMask or other Ethereum wallets.
+
+Here we finish a Ropsten TestNet transaction and deposit 0.00015 ether at https://ropsten.etherscan.io/tx/0x2c99d14b582d5e6c0c7ae4a2b1ab6a3b8347189b403c6f50ba35e80e7585234e
+
+With the information provided on etherscan, we run the deposit command in BHEX Chain testnet as follows:
+
+```console
+$ docker-compose run bhcli --chain-id bhexchain-testnet tx asset deposit 150ubheth 6623047 0xB6F9164ce6188f7d95523708fe450ABad1D45FBf 0x2c99d14b582d5e6c0c7ae4a2b1ab6a3b8347189b403c6f50ba35e80e7585234e --from alice
+{"chain_id":"bhexchain-testnet","account_number":"0","sequence":"1","fee":{"amount":[{"denom":"bht","amount":"200000000000000000"}],"gas":"200000"},"msgs":[{"type":"asset/MsgDeposit","value":{"from":"BHL3RExb5D9uEpBCYZT2Le8PAQ2MvsWrDLz","ext_address":"0xB6F9164ce6188f7d95523708fe450ABad1D45FBf","coins":[{"denom":"bheth","amount":"150000000000000"}],"utxo_ins":null,"txhash":"0x2c99d14b582d5e6c0c7ae4a2b1ab6a3b8347189b403c6f50ba35e80e7585234e","external_block_height":"6623047"}}],"memo":""}
+
+confirm transaction before signing and broadcasting [Y/n]: Y
+Password to sign with 'alice':
+
+Response:
+  TxHash: 6D3BA340E214AED08B08237FA0A486FC1A14BB1EAE517C16B3085692B4E40A38
+```
+
+After the above command is finished, we can check the BHETH balance changed to 0.00015 ubheth by running:
+
+```console
+$ docker-compose run bhcli query cu asset BHL3RExb5D9uEpBCYZT2Le8PAQ2MvsWrDLz BHETH --chain-id bhexchain-testnet
+
+  CUAddress:BHL3RExb5D9uEpBCYZT2Le8PAQ2MvsWrDLz
+  Symbol:BHETH
+  Address:0xB6F9164ce6188f7d95523708fe450ABad1D45FBf
+  Balance:150000000000000
+  BalanceOnhold:0
+  AssetType:2
+
+```
+
+### 4. Collect cross-chain assets to token withdrawal address
+
+Before we can transfer assets on BHEX CHAIN Demo, we must collect the cross-chain assets to the withdrawal address of the asset token, i.e., ```BHETH`` which is the only supported cross-chain asset currently.
+
+For better performance, an asset token can have multiple withdrawal addresses. We can find all addresses by running
+
+```console
+$  docker-compose run bhcli query address addresses BHETH 3 --chain-id bhexchain-testnet
+blockNumber:15805 addresses:0x0bd778b1763f0e19d6d7092424323F9075869028,0x22F27Cd0cb67c757043b739F2feC26ac4a3A7274,0x565aD40E575a436BE9d55B8c4864bA0A6d7f74EB,0x61Eb4C07223811e66e2ae3E37c2D62e206B7A6DD,0xE909Af88D62f346b947e1F6079C39409e9ec351B,0xF154b0DB87e141324547782757296d4368Fd6c1a,0xa3DBFE367Cf5708a3336E05289597DCbC0822b23,0xc8DcB29D033Fd3FA0BCE1c4522e78578975ABd3D,0xf31d1823BdA5F98651379E4Abd6711DAA00D7d0f
+```
+
+Here we use address type ```3``` meaning querying for withdrawal addresses. We pick one of ETH addresses on Ropsten Testnet is ```0x22F27Cd0cb67c757043b739F2feC26ac4a3A7274```. So we can start collecting 0.00012895 ether out of 0.000150 ether of our custodian unit, by paying maximally 21050 gas unit times 1 gwei gas price as cross-chain gas fee.
+
+```console
+$  docker-compose run bhcli --chain-id bhexchain-testnet tx asset collect-start 128.95ubheth 6623048 21050 1000000000 --from alice
+{"chain_id":"bhexchain-testnet","account_number":"0","sequence":"2","fee":{"amount":[{"denom":"bht","amount":"200000000000000000"}],"gas":"200000"},"msgs":[{"type":"asset/MsgCollectSign","value":{"from":"BHL3RExb5D9uEpBCYZT2Le8PAQ2MvsWrDLz","collect_from":"BHL3RExb5D9uEpBCYZT2Le8PAQ2MvsWrDLz","collect_from_address":"0xB6F9164ce6188f7d95523708fe450ABad1D45FBf","collect_to_address":"0x22F27Cd0cb67c757043b739F2feC26ac4a3A7274","symbol":"BHETH","amount":"128950000000000","utxo_ins":null,"utxo_outs":null,"gas_unit":"21050","gas_price":"1000000000","external_block_number":"6623048"}}],"memo":""}
+
+confirm transaction before signing and broadcasting [Y/n]: Y
+Password to sign with 'alice':
+
+Response:
+  TxHash: 4DE77D6678882BDB335BA209C62EF759D2E9716049892E46E2692A46745B81AF
+```
+
+*Note*: The external_block_number argument we use ```6623048```, which is the block height in ETH Ropsten testnet, higher than ```6623047``` used in deposit transaction. In fact any value higher than ```6623047``` can be used, before we actually running the collect transaction.
+
+Since the private key shares for cross-chain deposit address ```0xB6F9164ce6188f7d95523708fe450ABad1D45FBf``` are managed by all validators, the validators will go through a multi signature process to generate the signature for the eth transaction to transfer 0.00012895 ether from ```0xB6F9164ce6188f7d95523708fe450ABad1D45FBf``` to ```0x22F27Cd0cb67c757043b739F2feC26ac4a3A7274```. After the signature is generated, the order will contain the signed transaction data, obtained in ```SignedTx``` field by querying order id ```1```:
+
+```console
+$ docker-compose run bhcli query cu order BHL3RExb5D9uEpBCYZT2Le8PAQ2MvsWrDLz 0 --chain-id bhexchain-testnet
+
+		CUAddress:BHL3RExb5D9uEpBCYZT2Le8PAQ2MvsWrDLz
+		ID:1
+		OrderType:3
+		Symbol:BHETH
+		Status:6
+		AssetAmount:128950000000000
+		CollectFrom:BHL3RExb5D9uEpBCYZT2Le8PAQ2MvsWrDLz
+		From:0xB6F9164ce6188f7d95523708fe450ABad1D45FBf
+		To:0x22F27Cd0cb67c757043b739F2feC26ac4a3A7274
+		ExternalBlockNumber:6623048
+		SignedTx:F86980843B9ACA0082523A9422F27CD0CB67C757043B739F2FEC26AC4A3A727486754782F19C008029A0782C2FA7E19ED6158C103888C848B8DE03306F4704077CE9CA922FF4558BC7FAA007823CF5FE971DDC951E0471B15B8E7008495D04182079630A2C25FEAAE838D6
+
+```
+
+We can broadcast the signed transaction hex using any tool, for example, https://ropsten.etherscan.io/pushTx. In this example, the result is at https://ropsten.etherscan.io/tx/0x55a4e7ca2c8892a44852bcb236d7d8dfc2febc5676a36f438c0ab93cb245a520. Given the information, we finish the collect by running:
+
+```console
+$ docker-compose run bhcli --chain-id bhexchain-testnet tx asset collect-finish 1 21000000000000 6623058 0x0c05b7608a99b2a4e1868c537e5b12785f12afdfc3d460b8c7b2778d351b2308 --from node0
+{"chain_id":"bhexchain-testnet","account_number":"0","sequence":"3","fee":{"amount":[{"denom":"bht","amount":"200000000000000000"}],"gas":"200000"},"msgs":[{"type":"asset/MsgCollect","value":{"from":"BHL3RExb5D9uEpBCYZT2Le8PAQ2MvsWrDLz","order_id":"1","gas_used":"21000000000000","external_block_number":"6623058","tx_hash":"0x55a4e7ca2c8892a44852bcb236d7d8dfc2febc5676a36f438c0ab93cb245a520"}}],"memo":""}
+
+confirm transaction before signing and broadcasting [Y/n]: Y
+Password to sign with 'user115':12345678
+
+Response:
+  TxHash: 723B740126FBABBBC49F8F039B6174A706616BF07D29D5779BA0AD9B6D00F595
+$ docker-compose run bhcli query cu asset BHL3RExb5D9uEpBCYZT2Le8PAQ2MvsWrDLz BHETH --chain-id bhexchain-testnet
+
+  CUAddress:BHL3RExb5D9uEpBCYZT2Le8PAQ2MvsWrDLz
+  Symbol:BHETH
+  Address:0xB6F9164ce6188f7d95523708fe450ABad1D45FBf
+  Balance:129000000000000
+  BalanceOnhold:0
+  AssetType:2
+
+```
+
+Then we note that after the collect, the BHETH balance is unchanged except the actual cross-chain gas fee paid to the ETH Ropsten testnet (21000 gwei = 0.000150 bheth - 0.000129 bheth).
+
+### 5. Transfer cross-chain assets and then withdraw from token withdrawal address
+
+After collect, we can transfer cross-chain assets on BHEX Chain testnet, and a custodian unit, for example, ```bob``` at ```BHWHE2muYTvDj8dDGz4P5wnwB6uyL39W2Vd```, even though it have not deposited any cross-chain assets, can withdraw received assets from one of the token withdrawal addresses.
+
+First, we transfer 0.000129 ether to another account.
+
+```console
+$ docker-compose run bhcli --chain-id bhexchain-testnet --node tcp://localhost:26657 tx send BHWHE2muYTvDj8dDGz4P5wnwB6uyL39W2Vd 129000nbheth --from alice --gas-prices 1ubht
+{"chain_id":"bhexchain-testnet","account_number":"0","sequence":"4","fee":{"amount":[{"denom":"bht","amount":"200000000000000000"}],"gas":"200000"},"msgs":[{"type":"transfer/MsgTransfer","value":{"from_address":"BHL3RExb5D9uEpBCYZT2Le8PAQ2MvsWrDLz","to_address":"BHWHE2muYTvDj8dDGz4P5wnwB6uyL39W2Vd","amount":[{"denom":"bheth","amount":"129000000000000"}]}}],"memo":""}
+
+confirm transaction before signing and broadcasting [Y/n]: Y
+Password to sign with 'alice':
+
+Response:
+  TxHash: F968E83738C989C02BB9856377FEF78F22E146012880604F3AD490E424B927CE
+```
+
+```0x22F27Cd0cb67c757043b739F2feC26ac4a3A7274```, one of the token withdrawal addresses we picked above, to ```0xbFDFA2293D6045235f70B61ee099F9005ae5B4F1```, by paying maximally 21050 gas unit times 1 gwei gas price as cross-chain gas fee. Of course, before that, this custodian unit should have some BHT for gas fee on BHEX Chain, using command similar to above but with different asset denom ```bht```.
+
+```console
+$ docker-compose run bhcli --chain-id bhexchain-testnet tx asset withdrawal-start 107900nbheth 6623059 21050 1000000000 0x22F27Cd0cb67c757043b739F2feC26ac4a3A7274 0xbFDFA2293D6045235f70B61ee099F9005ae5B4F1 --from bob --gas-prices 1ubht
+{"chain_id":"bhexchain-testnet","account_number":"0","sequence":"0","fee":{"amount":[{"denom":"bht","amount":"200000000000000000"}],"gas":"200000"},"msgs":[{"type":"asset/MsgWithdrawalSign","value":{"from":"BHWHE2muYTvDj8dDGz4P5wnwB6uyL39W2Vd","withdrawal_from_address":"0x22F27Cd0cb67c757043b739F2feC26ac4a3A7274","withdrawal_to_address":"0xbFDFA2293D6045235f70B61ee099F9005ae5B4F1","symbol":"BHETH","amount":"107900000000000","utxo_ins":null,"utxo_outs":null,"gas_unit":"21050","gas_price":"1000000000","external_block_number":"6623059"}}],"memo":""}
+
+confirm transaction before signing and broadcasting [Y/n]: Y
+Password to sign with 'bob':
+
+Response:
+  TxHash: C3C5E973D37641D7F3CD6BF4B6A12EA0571A27083638ECF1190527C724E499A6
+```
+
+*Note*: The external_block_number argument we use ```6623059```, which is the block height in ETH Ropsten testnet, higher than ```6623058``` used in collect-finish transaction. In fact any value higher than ```6623058``` can be used, before we actually running the withdrawal transaction.
+
+Since the private key shares for cross-chain token withdrawal address ```0x22F27Cd0cb67c757043b739F2feC26ac4a3A7274``` are managed by all validators, the validators will go through a multi signature process to generate the signature for the eth transaction to withdraw 0.0001 ether. After the signature is generated, the order will contain the signed transaction data, obtained in ```SignedTx``` field by querying order id ```2```:
+
+```console
+$ docker-compose run bhcli query cu order BHL3RExb5D9uEpBCYZT2Le8PAQ2MvsWrDLz 0 --chain-id bhexchain-testnet
+
+		CUAddress:BHWHE2muYTvDj8dDGz4P5wnwB6uyL39W2Vd
+		ID:0
+		OrderType:2
+		Symbol:BHETH
+		Status:6
+		AssetAmount:107900000000000
+		From:0x22F27Cd0cb67c757043b739F2feC26ac4a3A7274
+		To:0xbFDFA2293D6045235f70B61ee099F9005ae5B4F1
+		ExternalBlockNumber:6623059
+		SignedTx:F86937843B9ACA0082523A94BFDFA2293D6045235F70B61EE099F9005AE5B4F18662226D2BD800802AA0D62DE8FA6F006F1CC28CEDD7D61B3D92B040A63C19BFE28FC1964B12133F295FA001F582E677560CC5333ED2FCF2142FB285B1969D80E6AD6500A9FF4A9A571004
+```
+
+We can broadcast the signed transaction hex using any tool, for example, https://ropsten.etherscan.io/pushTx. In this example, the result is at https://ropsten.etherscan.io/tx/0xbb91dffecef8e3a41d54f74d9864d4f0f1d7b1056c463d6218023731c33f270d. Given the information, we finish the collect by running:
+
+```console
+$ docker-compose run bhcli --chain-id bhexchain-testnet tx asset withdrawal-finish 0 21000000000000 6623077 0xbb91dffecef8e3a41d54f74d9864d4f0f1d7b1056c463d6218023731c33f270d --from bob
+{"chain_id":"bhexchain-testnet","account_number":"0","sequence":"1","fee":{"amount":[{"denom":"bht","amount":"200000000000000000"}],"gas":"200000"},"msgs":[{"type":"asset/MsgWithdrawal","value":{"from":"BHWHE2muYTvDj8dDGz4P5wnwB6uyL39W2Vd","order_id":"0","gas_used":"21000000000000","external_block_number":"6623077","tx_hash":"0xbb91dffecef8e3a41d54f74d9864d4f0f1d7b1056c463d6218023731c33f270d"}}],"memo":""}
+
+confirm transaction before signing and broadcasting [Y/n]: Y
+Password to sign with 'bob':
+
+Response:
+  TxHash: A5B1AB6A83602B133FAF6684D73AB64BC0EDC9F41BC6440D971B41144321CA2E
+
+$ docker-compose run bhcli query cu asset BHWHE2muYTvDj8dDGz4P5wnwB6uyL39W2Vd BHETH --chain-id bhexchain-testnet
+
+  CUAddress:BHL3RExb5D9uEpBCYZT2Le8PAQ2MvsWrDLz
+  Symbol:BHETH
+  Address:
+  Balance:100 000 000 000
+  BalanceOnhold:0
+  AssetType:2
+
+```
+
+The left BHT balance is only 100nbht, which shows that the withdrawal is successfully recorded on BHEX Chain testnet ledger.
+
+## Notes
+
+We acknowledge that on BHEX Chain testnet the features are not completed and the network may not be stable. Here are part of known issues:
+
+- Only support Ethereum Ropsten Testnet via asset symbol BHETH. Others are not yet supported and will be lost in depositing to BHEX Chain testnet.
+
+- There is gas fee, with default gas price 1ubht.
+
+- The validators are pre-defined and may not be altered. Currently there are 4 validators.
+
+- The testnet may have frequent update, including API and cli tool changed, and even the whole network is reset. When a reset happens, all testnet ETH on chain may be lost if not withdraw in time.
+
+- Currently, the architecture is based on [cosmos-sdk](https://github.com/cosmos/cosmos-sdk). We will open source the code once it become more stable.
+
+If you find any other issues, feel free to report. Thanks.
+
+BHEX Chain team
